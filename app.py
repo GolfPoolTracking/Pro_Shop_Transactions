@@ -1,3 +1,5 @@
+import html
+
 import streamlit as st
 import pandas as pd
 from supabase import create_client, Client
@@ -5,6 +7,8 @@ from datetime import date, datetime
 
 # --- Page Config ---
 st.set_page_config(page_title="Pro Shop Balance", page_icon="⛳", layout="centered")
+
+PAGE_SIZE = 25
 
 # --- Database Connection ---
 @st.cache_resource
@@ -71,18 +75,25 @@ def bulk_insert_transactions(records: list):
     supabase.table("proshop_transactions").insert(records).execute()
     fetch_transactions.clear()
 
+def _plain(value):
+    """Convert numpy scalars to plain Python values for the Supabase client."""
+    return value.item() if hasattr(value, "item") else value
+
 def apply_editor_changes(original_df: pd.DataFrame, editor_state: dict):
+    """original_df must be exactly the frame that was shown in the editor."""
     has_changes = False
 
-    # 1. Handle Deletions
-    for row_idx in editor_state.get("deleted_rows", []):
-        row_id = original_df.iloc[row_idx]["id"]
-        supabase.table("proshop_transactions").delete().eq("id", row_id).execute()
+    # 1. Deletions (single call)
+    deleted_ids = [_plain(original_df.iloc[i]["id"]) for i in editor_state.get("deleted_rows", [])]
+    if deleted_ids:
+        supabase.table("proshop_transactions").delete().in_("id", deleted_ids).execute()
         has_changes = True
 
-    # 2. Handle Edits
+    # 2. Edits (differ per row, so one call each)
     for row_idx, edits in editor_state.get("edited_rows", {}).items():
-        row_id = original_df.iloc[int(row_idx)]["id"]
+        row_id = _plain(original_df.iloc[int(row_idx)]["id"])
+        if row_id in deleted_ids:
+            continue
         payload = {}
         if "Date" in edits:
             payload["transaction_date"] = str(edits["Date"])
@@ -183,60 +194,103 @@ with st.form("transaction_form", clear_on_submit=True):
 
 st.divider()
 
-# --- Transaction History & Inline Editor ---
+# --- Transaction History ---
 st.subheader("Transaction History")
+
+
+def render_list(df: pd.DataFrame):
+    """Lightweight HTML list: scrolls with the page, grouped by date."""
+    rows_html, last_date = [], None
+    for r in df.itertuples():
+        if r.transaction_date != last_date:
+            last_date = r.transaction_date
+            rows_html.append(
+                f"<div style='margin:14px 0 4px;font-size:0.8rem;opacity:.6;"
+                f"font-weight:600'>{last_date:%a %d %b %Y}</div>"
+            )
+        colour = "#16a34a" if r.amount > 0 else "#dc2626"
+        rows_html.append(
+            "<div style='display:flex;justify-content:space-between;align-items:center;"
+            "padding:8px 0;border-bottom:1px solid rgba(128,128,128,.2)'>"
+            f"<div><div>{html.escape(str(r.description))}</div>"
+            f"<div style='font-size:.75rem;opacity:.55'>Balance €{r.running_balance:,.2f}</div></div>"
+            f"<div style='color:{colour};font-weight:600;white-space:nowrap'>"
+            f"{r.amount:+,.2f} €</div></div>"
+        )
+    st.markdown("".join(rows_html), unsafe_allow_html=True)
+
 
 if not df_transactions.empty:
     f_search, f_filter = st.columns([2, 1])
     with f_search:
-        search_term = st.text_input("Search descriptions...", placeholder="Filter by 2's, Wedge, Draw...", label_visibility="collapsed")
+        search_term = st.text_input("Search", placeholder="Filter by 2's, Wedge, Draw...",
+                                    label_visibility="collapsed")
     with f_filter:
-        filter_type = st.selectbox("Filter", ["All Transactions", "Credits (+)", "Spends (-)"], label_visibility="collapsed")
+        filter_type = st.selectbox("Filter", ["All Transactions", "Credits (+)", "Spends (-)"],
+                                   label_visibility="collapsed")
 
-    # Compute chronological running balance before filtering
-    df_chrono = df_transactions.sort_values(["transaction_date", "created_at"], ascending=[True, True]).copy()
+    # Running balance computed chronologically *before* filtering
+    df_chrono = df_transactions.sort_values(["transaction_date", "created_at"]).copy()
     df_chrono["running_balance"] = df_chrono["amount"].cumsum()
-    df_view = df_chrono.sort_values(["transaction_date", "created_at"], ascending=[False, False]).copy()
+    df_view = df_chrono.sort_values(["transaction_date", "created_at"], ascending=False)
 
     if search_term:
-        df_view = df_view[df_view["description"].str.contains(search_term, case=False, na=False)]
+        df_view = df_view[df_view["description"].str.contains(search_term, case=False, na=False, regex=False)]
     if filter_type == "Credits (+)":
         df_view = df_view[df_view["amount"] > 0]
     elif filter_type == "Spends (-)":
         df_view = df_view[df_view["amount"] < 0]
-
     df_view = df_view.reset_index(drop=True)
 
-    display_df = pd.DataFrame({
-        "Date": df_view["transaction_date"],
-        "Description": df_view["description"],
-        "Amount (€)": df_view["amount"],
-        "Running Bal (€)": df_view["running_balance"]
-    })
+    # Reset paging whenever the filter changes
+    sig = (search_term, filter_type)
+    if st.session_state.get("_filter_sig") != sig:
+        st.session_state["_filter_sig"] = sig
+        st.session_state["visible_rows"] = PAGE_SIZE
 
-    st.caption("💡 Double-click any cell to edit, or select a row on the left and press `Delete` to remove it, then click **Save Table Edits**.")
+    visible = st.session_state.get("visible_rows", PAGE_SIZE)
+    df_page = df_view.head(visible).reset_index(drop=True)
 
-    edited_df = st.data_editor(
-        display_df,
-        key="tx_editor",
-        use_container_width=True,
-        hide_index=True,
-        num_rows="dynamic",
-        disabled=["Running Bal (€)"],
-        column_config={
-            "Date": st.column_config.DateColumn("Date", required=True),
-            "Description": st.column_config.TextColumn("Description", required=True),
-            "Amount (€)": st.column_config.NumberColumn("Amount (€)", format="€%.2f", required=True),
-            "Running Bal (€)": st.column_config.NumberColumn("Running Bal (€)", format="€%.2f")
-        }
-    )
+    edit_mode = st.toggle("✏️ Edit mode")
 
-    editor_state = st.session_state.get("tx_editor", {})
-    has_pending_edits = bool(editor_state.get("edited_rows") or editor_state.get("deleted_rows"))
+    if df_view.empty:
+        st.info("No transactions match your filter.")
+    elif not edit_mode:
+        render_list(df_page)
+    else:
+        st.caption("Double-click a cell to edit, or select a row and press `Delete`, then save.")
+        display_df = pd.DataFrame({
+            "Date": df_page["transaction_date"],
+            "Description": df_page["description"],
+            "Amount (€)": df_page["amount"],
+        })
+        # Key includes filter + page size so stale edits can never map to the wrong rows
+        editor_key = f"tx_editor_{hash(sig)}_{visible}"
+        st.data_editor(
+            display_df,
+            key=editor_key,
+            use_container_width=True,
+            hide_index=True,
+            num_rows="fixed",      # no phantom "add row"; use the form above
+            height=450,
+            column_config={
+                "Date": st.column_config.DateColumn("Date", required=True),
+                "Description": st.column_config.TextColumn("Description", required=True),
+                "Amount (€)": st.column_config.NumberColumn("Amount (€)", format="€%.2f", required=True),
+            },
+        )
+        editor_state = st.session_state.get(editor_key, {})
+        if editor_state.get("edited_rows") or editor_state.get("deleted_rows"):
+            if st.button("💾 Save Table Edits", type="primary", use_container_width=True):
+                apply_editor_changes(df_page, editor_state)
 
-    if has_pending_edits:
-        if st.button("💾 Save Table Edits to Database", type="primary"):
-            apply_editor_changes(df_view, editor_state)
+    # Paging
+    remaining = len(df_view) - visible
+    st.caption(f"Showing {min(visible, len(df_view))} of {len(df_view)}")
+    if remaining > 0:
+        if st.button(f"Show {min(PAGE_SIZE, remaining)} more", use_container_width=True):
+            st.session_state["visible_rows"] = visible + PAGE_SIZE
+            st.rerun()
 else:
     st.info("No transactions in the database yet. Log one above or import your Excel file in the sidebar.")
 
@@ -251,16 +305,36 @@ with st.sidebar:
         raw_excel = raw_excel.dropna(subset=["Amount", "Date", "Description"])
         raw_excel["Date"] = pd.to_datetime(raw_excel["Date"]).dt.date
 
-        st.write(f"Ready to import **{len(raw_excel)}** transactions.")
-        if st.button("🚀 Bulk Import to Supabase", type="primary", use_container_width=True):
-            records_to_insert = [
-                {
-                    "transaction_date": row["Date"].isoformat(),
-                    "description": str(row["Description"]).strip(),
-                    "amount": float(row["Amount"])
-                }
-                for _, row in raw_excel.iterrows()
-            ]
+        # Duplicate guard: skip rows already in the database (same date, description, amount)
+        existing_keys = set()
+        if not df_transactions.empty:
+            existing_keys = {
+                (d, str(desc).strip(), round(float(a), 2))
+                for d, desc, a in zip(
+                    df_transactions["transaction_date"],
+                    df_transactions["description"],
+                    df_transactions["amount"],
+                )
+            }
+
+        records_to_insert, skipped = [], 0
+        for _, row in raw_excel.iterrows():
+            desc = str(row["Description"]).strip()
+            amt = round(float(row["Amount"]), 2)
+            if (row["Date"], desc, amt) in existing_keys:
+                skipped += 1
+                continue
+            records_to_insert.append({
+                "transaction_date": row["Date"].isoformat(),
+                "description": desc,
+                "amount": amt,
+            })
+
+        st.write(f"Ready to import **{len(records_to_insert)}** new transactions.")
+        if skipped:
+            st.caption(f"Skipping {skipped} that already exist.")
+
+        if records_to_insert and st.button("🚀 Bulk Import to Supabase", type="primary", use_container_width=True):
             bulk_insert_transactions(records_to_insert)
             st.success(f"Imported {len(records_to_insert)} rows!")
             st.rerun()
