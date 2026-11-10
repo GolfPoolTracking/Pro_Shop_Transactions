@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 from supabase import create_client, Client
-from datetime import date
+from datetime import date, datetime
 
 # --- Page Config ---
 st.set_page_config(page_title="Pro Shop Balance", page_icon="⛳", layout="centered")
@@ -14,6 +14,16 @@ def init_connection() -> Client:
     return create_client(url, key)
 
 supabase = init_connection()
+
+# --- Keep-Alive Ping Handler (/?view=ping) ---
+if st.query_params.get("view") == "ping":
+    try:
+        # Lightweight query to keep both Streamlit and Supabase active
+        supabase.table("proshop_transactions").select("id").limit(1).execute()
+        st.write(f"🟢 PONG - Pro Shop App & Supabase Awake ({datetime.now().strftime('%Y-%m-%d %H:%M:%S')})")
+    except Exception as e:
+        st.write(f"🟡 PONG - App Awake, DB Ping Error: {e}")
+    st.stop()
 
 # --- Database Functions ---
 @st.cache_data(ttl=60)
@@ -103,7 +113,7 @@ else:
     calculated_balance, total_winnings, total_spent = 0.0, 0.0, 0.0
 
 saved_shop_record = fetch_shop_record(fallback=calculated_balance)
-difference = shop_record_diff = saved_shop_record - calculated_balance
+difference = saved_shop_record - calculated_balance
 
 # --- Account Status & Reconciliation ---
 st.subheader("Account Reconciliation")
@@ -237,7 +247,6 @@ with st.sidebar:
     uploaded_file = st.file_uploader("Upload Excel sheet", type=["xlsx"])
 
     if uploaded_file is not None:
-        # Read starting from row 4 (index 3) to skip the summary block at the top
         raw_excel = pd.read_excel(uploaded_file, skiprows=3, names=["Amount", "Date", "Description"])
         raw_excel = raw_excel.dropna(subset=["Amount", "Date", "Description"])
         raw_excel["Date"] = pd.to_datetime(raw_excel["Date"]).dt.date
