@@ -1,4 +1,4 @@
-streamlit==1.32.0
-pandas==2.2.1
-supabase==2.4.0
-openpyxl==3.1.2
+streamlit
+pandas
+supabase
+openpyxl
