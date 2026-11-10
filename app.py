@@ -80,7 +80,8 @@ def _plain(value):
     return value.item() if hasattr(value, "item") else value
 
 def apply_editor_changes(original_df: pd.DataFrame, editor_state: dict):
-    """original_df must be exactly the frame that was shown in the editor."""
+    """original_df must be exactly the frame that was shown in the editor.
+    Rows added in the editor (if the fallback 'dynamic' mode is in use) are ignored."""
     has_changes = False
 
     # 1. Deletions (single call)
@@ -109,6 +110,14 @@ def apply_editor_changes(original_df: pd.DataFrame, editor_state: dict):
         fetch_transactions.clear()
         st.toast("Changes saved to Supabase!", icon="✅")
         st.rerun()
+
+def delete_only_editor(df: pd.DataFrame, **kwargs):
+    """Editor that allows deleting rows but not adding.
+    Falls back to 'dynamic' on older Streamlit versions without num_rows='delete'."""
+    try:
+        return st.data_editor(df, num_rows="delete", **kwargs)
+    except Exception:
+        return st.data_editor(df, num_rows="dynamic", **kwargs)
 
 # --- Main App UI ---
 st.title("⛳ Pro Shop Account Tracker")
@@ -266,12 +275,11 @@ if not df_transactions.empty:
         })
         # Key includes filter + page size so stale edits can never map to the wrong rows
         editor_key = f"tx_editor_{hash(sig)}_{visible}"
-        st.data_editor(
+        delete_only_editor(
             display_df,
             key=editor_key,
             use_container_width=True,
             hide_index=True,
-            num_rows="fixed",      # no phantom "add row"; use the form above
             height=450,
             column_config={
                 "Date": st.column_config.DateColumn("Date", required=True),
