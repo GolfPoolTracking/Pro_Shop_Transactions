@@ -30,11 +30,11 @@ if st.query_params.get("view") == "ping":
     st.stop()
 
 # --- View switch: Pro Shop account vs BRS purse ---
-view = st.radio("View", ["⛳ Pro Shop", "🏌️ BRS Purse"], horizontal=True,
+view = st.radio("View", ["⛳ Pro Shop", "📊 Golf P/L"], horizontal=True,
                 label_visibility="collapsed")
-if view == "🏌️ BRS Purse":
+if view == "📊 Golf P/L":
     from brs_pl_tab import render_brs_tab
-    st.title("🏌️ BRS Purse")
+    st.title("📊 Golf P/L")
     render_brs_tab(supabase)
     st.stop()
 
