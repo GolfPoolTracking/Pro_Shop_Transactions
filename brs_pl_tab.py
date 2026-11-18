@@ -62,11 +62,13 @@ EVENT_COLS = ["date", "kind", "amount", "source", "label", "entry"]
 
 
 def build_events(brs: list[dict], proshop: list[dict] | None,
-                 include_guest: bool = True, include_swing: bool = False,
-                 exclude_words: tuple[str, ...] = ()) -> pd.DataFrame:
+                 include_guest: bool = True,
+                 include_swing: bool = False) -> pd.DataFrame:
     """One row per cost or winning. amount is signed within its kind:
-    refunds are negative costs. Top-ups and unclassified credits are ignored
-    because moving money into an account is neither a cost nor a win."""
+    refunds are negative costs. Costs come only from the BRS purse.
+    Pro Shop credits are winnings; Pro Shop debits are winnings being spent
+    in the shop, so they are NOT costs. BRS top-ups and unclassified credits
+    are ignored because moving money around is neither a cost nor a win."""
     ev = []
     for r in brs:
         cat, d = r["category"], str(r["txn_at"])[:10]
@@ -84,14 +86,10 @@ def build_events(brs: list[dict], proshop: list[dict] | None,
             ev.append((d, "win", cred, "BRS purse", label, 0))
     for r in proshop or []:
         amt = float(r["amount"])
-        desc = str(r.get("description") or "")
-        d = str(r["transaction_date"])[:10]
         if amt > 0:
-            ev.append((d, "win", amt, "Pro Shop", desc, 0))
-        elif amt < 0:
-            if any(w and w in desc.lower() for w in exclude_words):
-                continue
-            ev.append((d, "cost", -amt, "Pro Shop", desc, 0))
+            desc = str(r.get("description") or "")
+            ev.append((str(r["transaction_date"])[:10], "win", amt,
+                       "Pro Shop", desc, 0))
     df = pd.DataFrame(ev, columns=EVENT_COLS)
     if not df.empty:
         df["date"] = pd.to_datetime(df["date"])
@@ -211,16 +209,12 @@ def _lifetime(supabase):
     with st.expander("What counts as a cost or a win"):
         inc_guest = st.checkbox("Count guest fees as costs", value=True)
         inc_swing = st.checkbox("Count Swing Room spend as a cost", value=False)
-        words = st.text_input(
-            "Ignore Pro Shop spends containing (comma separated)",
-            placeholder="wedge, glove, balls",
-            help="Use for things bought from the shop that aren't competition costs.")
-        st.caption("Pro Shop: every positive amount is counted as a win and "
-                   "every negative as a cost, as in the Pro Shop screen. "
-                   "BRS top-ups are never counted as winnings.")
-    exclude = tuple(w.strip().lower() for w in words.split(",") if w.strip())
+        st.caption("Costs are what BRS charges you (entry fees, minus refunds). "
+                   "Pro Shop credits count as winnings. Pro Shop spending is "
+                   "you spending those winnings in the shop, so it is not "
+                   "counted as a cost. BRS top-ups are never winnings.")
 
-    ev = build_events(brs, proshop, inc_guest, inc_swing, exclude)
+    ev = build_events(brs, proshop, inc_guest, inc_swing)
     if ev.empty:
         st.info("Nothing to show yet.")
         return
