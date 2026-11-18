@@ -1,3 +1,4 @@
+import hmac
 import html
 
 import streamlit as st
@@ -26,8 +27,34 @@ if st.query_params.get("view") == "ping":
         supabase.table("proshop_transactions").select("id").limit(1).execute()
         st.write(f"🟢 PONG - Pro Shop App & Supabase Awake ({datetime.now().strftime('%Y-%m-%d %H:%M:%S')})")
     except Exception as e:
-        st.write(f"🟡 PONG - App Awake, DB Ping Error: {e}")
+        st.write("🟡 PONG - App Awake, DB Ping Error")
     st.stop()
+
+
+# -----------------------------------------------------------------------------
+# PRIVATE ACCESS CONTROL
+# Requires APP_PASSWORD in Streamlit Secrets. Fails closed if it is missing.
+# -----------------------------------------------------------------------------
+def require_password() -> None:
+    expected = st.secrets.get("APP_PASSWORD")
+    if not expected:
+        st.error("🔒 Access is locked: `APP_PASSWORD` is not set in Streamlit Secrets.")
+        st.stop()
+    if st.session_state.get("app_authenticated"):
+        return
+    st.markdown("### 🔒 Private Access")
+    with st.form("app_login_form"):
+        entered = st.text_input("Password", type="password")
+        if st.form_submit_button("Unlock", type="primary", use_container_width=True):
+            if hmac.compare_digest(str(entered), str(expected)):
+                st.session_state["app_authenticated"] = True
+                st.rerun()
+            else:
+                st.error("❌ Incorrect password.")
+    st.stop()
+
+
+require_password()
 
 # --- View switch: Pro Shop account vs BRS purse ---
 view = st.radio("View", ["⛳ Pro Shop", "📊 Golf P/L"], horizontal=True,
