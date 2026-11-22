@@ -38,7 +38,19 @@ if st.query_params.get("view") == "ping":
 
 # --- TEMPORARY Sentry test (/?view=sentry-test) — remove once confirmed ---
 if st.query_params.get("view") == "sentry-test":
-    st.write("Sending a test error to Sentry…")
+    active = init_sentry()
+    st.write(f"Sentry active: **{'YES' if active else 'NO — SENTRY_DSN secret not found'}**")
+    if active:
+        # Test 1: send a message directly (proves the DSN/connection works)
+        sentry_sdk.capture_message("Sentry test message from Pro Shop app")
+        # Test 2: send a caught error directly
+        try:
+            1 / 0
+        except ZeroDivisionError as e:
+            sentry_sdk.capture_exception(e)
+        sentry_sdk.flush(timeout=5)
+        st.write("Sent a test message and a test error directly.")
+    # Test 3: an uncaught error, the way a real bug would happen
     division_by_zero = 1 / 0
 
 # --- View switch: Pro Shop account vs BRS purse ---
