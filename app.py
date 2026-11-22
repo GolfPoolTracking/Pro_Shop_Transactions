@@ -36,13 +36,6 @@ if st.query_params.get("view") == "ping":
         st.write(f"🟡 PONG - App Awake, DB Ping Error: {e}")
     st.stop()
 
-# --- TEMPORARY Sentry test (/?view=sentry-test) — remove once confirmed ---
-if st.query_params.get("view") == "sentry-test":
-    active = init_sentry()
-    st.write(f"Sentry active: **{'YES' if active else 'NO — SENTRY_DSN secret not found'}**")
-    # An uncaught error, the way a real bug would happen
-    raise RuntimeError("Sentry test: uncaught error from Pro Shop app")
-
 # --- View switch: Pro Shop account vs BRS purse ---
 view = st.radio("View", ["⛳ Pro Shop", "📊 Golf P/L"], horizontal=True,
                 label_visibility="collapsed")
