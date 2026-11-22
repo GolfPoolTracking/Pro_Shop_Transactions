@@ -2,11 +2,17 @@ import html
 
 import streamlit as st
 import pandas as pd
+import sentry_sdk
 from supabase import create_client, Client
 from datetime import date, datetime
 
+from sentry_setup import init_sentry
+
 # --- Page Config ---
 st.set_page_config(page_title="Pro Shop Balance", page_icon="⛳", layout="centered")
+
+# --- Error reporting (Sentry) ---
+init_sentry()
 
 PAGE_SIZE = 25
 
@@ -26,12 +32,19 @@ if st.query_params.get("view") == "ping":
         supabase.table("proshop_transactions").select("id").limit(1).execute()
         st.write(f"🟢 PONG - Pro Shop App & Supabase Awake ({datetime.now().strftime('%Y-%m-%d %H:%M:%S')})")
     except Exception as e:
+        sentry_sdk.capture_exception(e)  # report DB outages seen by the keep-alive ping
         st.write(f"🟡 PONG - App Awake, DB Ping Error: {e}")
     st.stop()
+
+# --- TEMPORARY Sentry test (/?view=sentry-test) — remove once confirmed ---
+if st.query_params.get("view") == "sentry-test":
+    st.write("Sending a test error to Sentry…")
+    division_by_zero = 1 / 0
 
 # --- View switch: Pro Shop account vs BRS purse ---
 view = st.radio("View", ["⛳ Pro Shop", "📊 Golf P/L"], horizontal=True,
                 label_visibility="collapsed")
+sentry_sdk.set_tag("view", view)  # shows which tab an error happened on
 if view == "📊 Golf P/L":
     from brs_pl_tab import render_brs_tab
     st.title("📊 Golf P/L")
