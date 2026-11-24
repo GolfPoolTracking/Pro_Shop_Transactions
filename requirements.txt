@@ -2,4 +2,4 @@ streamlit
 pandas
 supabase
 openpyxl
-sentry-sdk
+sentry-sdk>=3.0,<4
