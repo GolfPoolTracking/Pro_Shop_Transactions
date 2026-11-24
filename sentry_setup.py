@@ -50,7 +50,9 @@ def init_sentry() -> bool:
     sentry_sdk.init(
         dsn=dsn,
         environment="production",
-        send_default_pii=False,   # don't send IPs / user details
+        # sentry-sdk 3.x replaced send_default_pii with data_collection;
+        # user_info defaults to on there, so turn it off explicitly.
+        data_collection={"user_info": False},   # don't send IPs / user details
         traces_sample_rate=0.0,   # errors only, no performance tracing
     )
     _hook_streamlit_errors()
