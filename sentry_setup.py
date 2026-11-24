@@ -43,17 +43,24 @@ def _hook_streamlit_errors() -> None:
 
 @st.cache_resource
 def init_sentry() -> bool:
-    """Start Sentry once per server process (cached across reruns)."""
-    dsn = st.secrets.get("SENTRY_DSN")
-    if not dsn:
+    """Start Sentry once per server process (cached across reruns).
+
+    Never raises: if Sentry fails to start (bad DSN, SDK change, ...),
+    the app carries on without error reporting instead of crashing."""
+    try:
+        dsn = st.secrets.get("SENTRY_DSN")
+        if not dsn:
+            return False
+        sentry_sdk.init(
+            dsn=dsn,
+            environment="production",
+            # sentry-sdk 3.x replaced send_default_pii with data_collection;
+            # user_info defaults to on there, so turn it off explicitly.
+            data_collection={"user_info": False},   # don't send IPs / user details
+            traces_sample_rate=0.0,   # errors only, no performance tracing
+        )
+        _hook_streamlit_errors()
+        return True
+    except Exception:
+        _LOG.exception("Sentry failed to start; running without error reporting")
         return False
-    sentry_sdk.init(
-        dsn=dsn,
-        environment="production",
-        # sentry-sdk 3.x replaced send_default_pii with data_collection;
-        # user_info defaults to on there, so turn it off explicitly.
-        data_collection={"user_info": False},   # don't send IPs / user details
-        traces_sample_rate=0.0,   # errors only, no performance tracing
-    )
-    _hook_streamlit_errors()
-    return True
